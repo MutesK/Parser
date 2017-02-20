@@ -15,309 +15,355 @@ CParser::CParser(char *fileName)
 	{
 		// 파일 크기 가져옴.
 		fseek(fp, 0, SEEK_END);
-		fileSize = ftell(fp);
+		m_fileSize = ftell(fp);
 		fseek(fp, 0, SEEK_SET);
 
-		buffer = new char[fileSize + 1];
-		fread(buffer, fileSize + 1, 1, fp);
-		buffer[fileSize] = '\0';
+		m_buffer = new char[m_fileSize + 1];
+		fread(m_buffer, m_fileSize + 1, 1, fp);
+		m_buffer[m_fileSize] = '\0';
+
+		m_bufferAreaStart = -1;
+		m_bufferAreaEnd = m_fileSize;
+		m_buffFocusPos = 0;
 
 		fclose(fp);
 	}
-
+	else
+		throw 1;
 }
 
 CParser::~CParser()
 {
+	delete[]m_buffer;
 }
 
-bool CParser::SkipNoneCommand(char **_buff)
+bool CParser::ProvideArea(char *_AreaName)
 {
-	char *index = *_buff;
+	char *buff, chBuff[256];
+	int ilength;
+	bool bAreaFlag = false;
+
+	m_bufferAreaStart = -1;
+	m_bufferAreaEnd = m_fileSize;
+	m_buffFocusPos = 0;
+
+	//-----------------------------------------
+	//:, {, } 구역 찾음
+	//-----------------------------------------
+	while (GetNextWord(&buff, &ilength))
+	{
+		memset(chBuff, 0, 256);
+		memcpy(chBuff, buff, ilength);
+
+		if (chBuff[0] == ':')
+		{
+			if (0 == strcmp(chBuff + 1, _AreaName))
+			{
+				if (GetNextWord(&buff, &ilength))
+				{
+					memset(chBuff, 0, 256);
+					memcpy(chBuff, buff, ilength);
+
+					if (chBuff[0] == '{')
+					{
+						if (!SkipNoneCommand())
+							return false;
+
+						m_bufferAreaStart = m_buffFocusPos;
+					}
+				}
+				else
+					return false;
+			}
+		}
+		else if (bAreaFlag && chBuff[0] == '}')
+		{
+			m_bufferAreaEnd = m_buffFocusPos - 1;
+			return true;
+		}
+	}
+
+	return false;
+
+
+
+}
+bool CParser::SkipNoneCommand()
+{
+	char *buf = m_buffer + m_buffFocusPos;
 
 	while (true)
 	{
-		// 주석 스킵
-		if (*index == '/' && *(index + 1) == '/')
+		if (m_buffFocusPos > m_fileSize ||
+			m_buffFocusPos > m_bufferAreaEnd)
+			return false;
+
+		// 백스페이스 0x08
+		// 탭 0x09
+		// 라인 피트 0x0a
+		// 캐리지 리턴 0x0d
+		// 공백 0x20
+		if (*buf == 0x20 || *buf == 0x0d || *buf == 0x0a ||
+			*buf == 0x09 || *buf == 0x08)
 		{
-			while (*index != 0x0d)
-				index++;
-			index++;
+			*buf = 0x20;
+			++buf;
+
+			++m_buffFocusPos;
+		}
+		// 주석 '//' 엔터코드
+		else if (*buf == '/' && *(buf + 1) == '/')
+		{
+			while (*buf != 0x0d)
+			{
+				*buf = 0x20;
+				++m_buffFocusPos;
+				buf++;
+
+				if (m_buffFocusPos > m_fileSize ||
+					m_buffFocusPos > m_bufferAreaEnd)
+					return false;
+			}
 		}
 
-		if (*index == '/' && *(index + 1) == '*')
+		// 주석 '/**/'
+		else if (*buf == '/' && *(buf + 1) == '*')
 		{
-			while ((*index != '*') && (*(index + 1) != '/'))
-				index++;
-			index++;
-		}
+			while (!(*buf == '*' && *(buf + 1) == '/'))
+			{
+				*buf = 0x20;
+				++m_buffFocusPos;
+				buf++;
 
-		// 반복문 탈출 조건
-		if (*index == '\t' || *index == '"' || *index == 0x20 || *index == '\"' || *index == ':')
+				if (m_buffFocusPos > m_fileSize ||
+					m_buffFocusPos > m_bufferAreaEnd)
+					return false;
+			}
+
+			*buf = 0x20;
+			++buf;
+			*buf = 0x20;
+			++buf;
+
+			m_buffFocusPos += 2;
+		}
+		else
+		{
 			break;
-
-		if (index - buffer >= fileSize)
-			return false;
-
-		index++;
-	}
-
-	if (index - buffer >= fileSize)
-		return false;
-	else
-	{
-		*_buff = index + 1;
-		return true;
+		}
 	}
 }
-
-bool CParser::GetNextWord(char ** _buff, int * ipLength)
+bool CParser::GetNextWord(char **_buff_index, int *ipLength)
 {
-	if (SkipNoneCommand(_buff))
+	char *buffTemp;
+
+	if (!SkipNoneCommand())
+		return false;
+
+	if (m_buffFocusPos > m_fileSize ||
+		m_buffFocusPos > m_bufferAreaEnd)
+		return false;
+
+	buffTemp = *_buff_index = m_buffer + m_buffFocusPos;
+	*ipLength = 0;
+
+	// 문자열 읽기
+	if (**_buff_index == '"')
 	{
-		char *bufIndex = *_buff;
-
-		int count = 0;
-		if (bufIndex == '\0')
+		if (GetStringWord(_buff_index, ipLength))
+			return true;
+		else
 			return false;
-
-		while (*bufIndex != '}')
-		{
-			if (*bufIndex == '\t' || *bufIndex == 0x20 || *bufIndex == '\r' || *bufIndex == '\n')
-				break;
-
-			bufIndex++;
-			count++;
-		}
-
-		if (bufIndex - buffer >= fileSize)
-			return false;
-
-		*ipLength = count;
-		return true;
 	}
 
-	return false;
+	while (true)
+	{
+		// 단어의 기준
+		// 컴마 ','
+		// 마침표 '.'
+		// 따옴표 '"'
+		// 스페이스 0x20
+		// 백스페이스 0x08
+		// 탭 0x0a
+		// 라인 피트 0x0a
+		// 캐리지 리턴 0x0d
+		
+		if (**_buff_index == ',' || **_buff_index == '"' ||
+			**_buff_index == '.' || **_buff_index == 0x20 || **_buff_index == 0x08 || **_buff_index == 0x0a
+			|| **_buff_index == 0x0d)
+		{
+			break;
+		}
 
+		m_buffFocusPos++;
+		(*_buff_index)++;
+		(*ipLength)++;
+
+		if (m_buffFocusPos > m_fileSize ||
+			m_buffFocusPos > m_bufferAreaEnd)
+			return false;
+
+	}
+	*_buff_index = buffTemp;
+
+	if (*ipLength == 0)
+		return false;
+	return true;
 }
-
-bool CParser::isFloat(char *_buff, int len)
+bool CParser::GetStringWord(char **_buff_index, int *ipLength)
 {
-	int i = 0;
-	int dotcount = 0;
-	int numCount = 0;
+	char *buffTemp;
 
-	if (_buff[0] == '0')
+	buffTemp = *_buff_index = m_buffer + m_buffFocusPos;
+	*ipLength = 0;
+
+	// 문자열 읽기
+	if (**_buff_index != '"')
 		return false;
 
-	while (i < len)
+	// 첫 따옴푠느 넘긴다.
+	m_buffFocusPos++;
+	(*_buff_index)++;
+	(*buffTemp)++;
+
+	while (1)
 	{
-		if (_buff[i] >= '0' && _buff[i] <= '9')
+		if (**_buff_index == '"' || **_buff_index == 0x0a || **_buff_index == 0x0d)
 		{
-			i++;
-			numCount++;
-			continue;
-		}
-		else if (_buff[i] == '.')
-		{
-			i++;
-			dotcount++;
-			continue;
-		}
-		else {
-			return false;
+			m_buffFocusPos++;
+			break;
 		}
 
+		m_buffFocusPos++;
+		(*_buff_index)++;
+		(*ipLength)++;
+
+
+		if (m_buffFocusPos > m_fileSize ||
+			m_buffFocusPos > m_bufferAreaEnd)
+			return false;
 	}
 
-	if (len - numCount == 1)
-		return true;
-	else 
+	*_buff_index = buffTemp;
+
+	if (*ipLength == 0)
 		return false;
-}
-
-bool CParser::isInt(char *_buff, int len)
-{
-	int i = 0;
-
-	if (_buff[0] == '0')
-		return false;
-
-	while (i < len)
-	{
-		if (_buff[i] >= '0' && _buff[i] <= '9')
-		{
-			i++;
-			continue;
-		}
-		else {
-			return false;
-		}
-	}
-
 	return true;
 }
 
-bool CParser::GetValue(char *szName, int *ipValue, char *partName)
+bool CParser::GetValue(char *_name, char *_value, int *ipBufSize)
 {
-	char *buff, chWord[256];
-	int iLength;
+	char *buff, chBuff[256];
+	int ilength;
+	
+	m_buffFocusPos = m_bufferAreaStart;
 
-	buff = buffer;
-
-	// 찾고자 하는단어가 나올때까지 계속찾을것이므로, while문으로 검사
-	while (GetNextWord(&buff, &iLength))
+	while (GetNextWord(&buff, &ilength))
 	{
-		// WORD버퍼에 찾은 단어를 저장한다.
-		memset(chWord, 0, 256);
-		memcpy(chWord, buff, iLength);
+		memset(chBuff, 0, 256);
+		memcpy(chBuff, buff, ilength);
 
-		if (*(buff - 1) == ':')
-			strcpy_s(partName, iLength + 1, chWord);
-		
-		// 인자로 입력 받은 단어와 같은지 검사한다.
- 		 else if (0 == strcmp(szName, chWord))
+		if (0 == strcmp(_name, chBuff))
 		{
-			// 맞다면 바로 뒤에 =를 찾자.
-			if (GetNextWord(&buff, &iLength))
+			// 다음 문자열 부등호 '='
+			if (GetNextWord(&buff, &ilength))
 			{
-				memset(chWord, 0, 256);
-				memcpy(chWord, buff, iLength);
+				memset(chBuff, 0, 256);
+				memcpy(chBuff, buff, ilength);
 
-				if (0 == strcmp(chWord, "="))
+				if (0 == strcmp(chBuff, "="))
 				{
-					// 다음 부분의 데이터 부분을 얻음.
-					if (GetNextWord(&buff, &iLength))
+					if (GetNextWord(&buff, &ilength))
 					{
-						if (buff[0] != '\"')
-						{
-							memset(chWord, 0, 256);
-							memcpy(chWord, buff, iLength);
-							if (isInt(chWord, iLength))
-							{
-								*ipValue = atoi(chWord);
-								return true;
-							}
-							return false;
-						}
-						return false;
-					}
+						memset(chBuff, 0, 256);
+						memcpy(chBuff, buff, ilength);
 
+						strcpy_s(_value, ilength, buff);
+						*ipBufSize = ilength;
+						return true;
+					}
 					return false;
 				}
+				return false;
 			}
 			return false;
 		}
 	}
-	return false;
+
 }
-bool CParser::GetValue(char *szName, char *ipValue, char *partName)
+bool CParser::GetValue(char *_name, int *ipValue)
 {
-	char *buff, chWord[256];
-	int iLength;
+	char *buff, chBuff[256];
+	int ilength;
 
-	buff = buffer;
+	m_buffFocusPos = m_bufferAreaStart;
 
-	// 찾고자 하는단어가 나올때까지 계속찾을것이므로, while문으로 검사
-	while (GetNextWord(&buff, &iLength))
+	while (GetNextWord(&buff, &ilength))
 	{
-		// WORD버퍼에 찾은 단어를 저장한다.
-		memset(chWord, 0, 256);
-		memcpy(chWord, buff, iLength);
-		if (*(buff - 1) == ':')
-			strcpy_s(partName, iLength + 1, chWord);
-		
-		// 인자로 입력 받은 단어와 같은지 검사한다.
-		else if (0 == strcmp(szName, chWord))
+		memset(chBuff, 0, 256);
+		memcpy(chBuff, buff, ilength);
+
+		if (0 == strcmp(_name, chBuff))
 		{
-			// 맞다면 바로 뒤에 =를 찾자.
-			if (GetNextWord(&buff, &iLength))
+			// 다음 문자열 부등호 '='
+			if (GetNextWord(&buff, &ilength))
 			{
-				memset(chWord, 0, 256);
-				memcpy(chWord, buff, iLength);
+				memset(chBuff, 0, 256);
+				memcpy(chBuff, buff, ilength);
 
-				if (0 == strcmp(chWord, "="))
+				if (0 == strcmp(chBuff, "="))
 				{
-					// 다음 부분의 데이터 부분을 얻음.
-					if (GetNextWord(&buff, &iLength))
+					if (GetNextWord(&buff, &ilength))
 					{
-						if (buff[0] != '\"')
-						{
-							memset(chWord, 0, 256);
-							memcpy(chWord, buff, iLength);
-							if (!isInt(chWord, iLength))
-							{
-								if (!isFloat(chWord, iLength))
-								{
-									chWord[iLength] = '\0';
-									strcpy_s(ipValue, iLength + 1, chWord);
-									return true;
-								}
-							}
-							return false;
-						}
-						return false;
-					}
+						memset(chBuff, 0, 256);
+						memcpy(chBuff, buff, ilength);
 
+						*ipValue = atoi(chBuff);
+						return true;
+					}
 					return false;
 				}
+				return false;
 			}
 			return false;
 		}
 	}
-	return false;
 }
-bool CParser::GetValue(char *szName, float *ipValue, char *partName)
+bool CParser::GetValue(char *_name, float *ipValue)
 {
-	char *buff, chWord[256];
-	int iLength;
+	char *buff, chBuff[256];
+	int ilength;
 
-	buff = buffer;
-	// 찾고자 하는단어가 나올때까지 계속찾을것이므로, while문으로 검사
-	while (GetNextWord(&buff, &iLength))
+	m_buffFocusPos = m_bufferAreaStart;
+
+	while (GetNextWord(&buff, &ilength))
 	{
-		// WORD버퍼에 찾은 단어를 저장한다.
-		memset(chWord, 0, 256);
-		memcpy(chWord, buff, iLength);
+		memset(chBuff, 0, 256);
+		memcpy(chBuff, buff, ilength);
 
-		if (*(buff - 1) == ':')
-			strcpy_s(partName, iLength + 1, chWord);
-		
-		// 인자로 입력 받은 단어와 같은지 검사한다.
-		else if (0 == strcmp(szName, chWord))
+		if (0 == strcmp(_name, chBuff))
 		{
-			// 맞다면 바로 뒤에 =를 찾자.
-			if (GetNextWord(&buff, &iLength))
+			// 다음 문자열 부등호 '='
+			if (GetNextWord(&buff, &ilength))
 			{
-				memset(chWord, 0, 256);
-				memcpy(chWord, buff, iLength);
+				memset(chBuff, 0, 256);
+				memcpy(chBuff, buff, ilength);
 
-				if (0 == strcmp(chWord, "="))
+				if (0 == strcmp(chBuff, "="))
 				{
-					// 다음 부분의 데이터 부분을 얻음.
-					if (GetNextWord(&buff, &iLength))
+					if (GetNextWord(&buff, &ilength))
 					{
-						if (buff[0] != '\"')
-						{
+						memset(chBuff, 0, 256);
+						memcpy(chBuff, buff, ilength);
 
-							memset(chWord, 0, 256);
-							memcpy(chWord, buff, iLength);
-							if (isFloat(chWord, iLength))
-							{
-								*ipValue = atof(chWord);
-								return true;
-							}
-							return false;
-						}
-						return false;
+						*ipValue = atof(chBuff);
+						return true;
 					}
-
 					return false;
 				}
+				return false;
 			}
 			return false;
 		}
 	}
-
-	return false;
 }
