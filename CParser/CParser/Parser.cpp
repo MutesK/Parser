@@ -6,10 +6,10 @@
 
 
 
-CParser::CParser(char *fileName)
+CParser::CParser(WCHAR *fileName)
 {
 	FILE *fp;
-	fopen_s(&fp, fileName, "rb");
+	_wfopen_s(&fp, fileName, L"rb");
 
 	if (fp != nullptr)
 	{
@@ -18,9 +18,9 @@ CParser::CParser(char *fileName)
 		fileSize = ftell(fp);
 		fseek(fp, 0, SEEK_SET);
 
-		buffer = new char[fileSize + 1];
+		buffer = new WCHAR[fileSize + 1];
 		fread(buffer, fileSize + 1, 1, fp);
-		buffer[fileSize] = '\0';
+		buffer[fileSize] = L'\0';
 
 		fclose(fp);
 	}
@@ -31,29 +31,29 @@ CParser::~CParser()
 {
 }
 
-bool CParser::SkipNoneCommand(char **_buff)
+bool CParser::SkipNoneCommand(WCHAR **_buff)
 {
-	char *index = *_buff;
+	WCHAR *index = *_buff;
 
 	while (true)
 	{
 		// 주석 스킵
-		if (*index == '/' && *(index + 1) == '/')
+		if (*index == L'/' && *(index + 1) == L'/')
 		{
 			while (*index != 0x0d)
 				index++;
 			index++;
 		}
 
-		if (*index == '/' && *(index + 1) == '*')
+		if (*index == L'/' && *(index + 1) == L'*')
 		{
-			while ((*index != '*') && (*(index + 1) != '/'))
+			while ((*index != L'*') && (*(index + 1) != L'/'))
 				index++;
 			index++;
 		}
 
 		// 반복문 탈출 조건
-		if (*index == '\t' || *index == '"' || *index == 0x20 || *index == '\"' || *index == ':')
+		if (*index == L'\t' || *index == L'"' || *index == 0x20 || *index == L'\"' || *index == L':')
 			break;
 
 		if (index - buffer >= fileSize)
@@ -61,6 +61,8 @@ bool CParser::SkipNoneCommand(char **_buff)
 
 		index++;
 	}
+
+	
 
 	if (index - buffer >= fileSize)
 		return false;
@@ -71,23 +73,23 @@ bool CParser::SkipNoneCommand(char **_buff)
 	}
 }
 
-bool CParser::GetNextWord(char ** _buff, int * ipLength)
+bool CParser::GetNextWord(WCHAR ** _buff, int * ipLength)
 {
 	if (SkipNoneCommand(_buff))
 	{
-		char *bufIndex = *_buff;
+		WCHAR *bufIndex = *_buff;
 
 		int count = 0;
-		if (bufIndex == '\0')
+		if (bufIndex == L'\0')
 			return false;
 
-		while (*bufIndex != '}')
+		while (*bufIndex != L'}')
 		{
-			if (*bufIndex == '\t' || *bufIndex == 0x20 || *bufIndex == '\r' || *bufIndex == '\n')
+			if (*bufIndex == L'\t' || *bufIndex == 0x20 || *bufIndex == L'\r' || *bufIndex == L'\n')
 				break;
 
 			bufIndex++;
-			count++;
+			count+=2;
 		}
 
 		if (bufIndex - buffer >= fileSize)
@@ -101,24 +103,24 @@ bool CParser::GetNextWord(char ** _buff, int * ipLength)
 
 }
 
-bool CParser::isFloat(char *_buff, int len)
+bool CParser::isFloat(WCHAR *_buff, int len)
 {
 	int i = 0;
 	int dotcount = 0;
 	int numCount = 0;
 
-	if (_buff[0] == '0')
+	if (_buff[0] == L'0')
 		return false;
 
 	while (i < len)
 	{
-		if (_buff[i] >= '0' && _buff[i] <= '9')
+		if (_buff[i] >= L'0' && _buff[i] <= L'9')
 		{
 			i++;
 			numCount++;
 			continue;
 		}
-		else if (_buff[i] == '.')
+		else if (_buff[i] == L'.')
 		{
 			i++;
 			dotcount++;
@@ -136,16 +138,16 @@ bool CParser::isFloat(char *_buff, int len)
 		return false;
 }
 
-bool CParser::isInt(char *_buff, int len)
+bool CParser::isInt(WCHAR *_buff, int len)
 {
 	int i = 0;
 
-	if (_buff[0] == '0')
+	if (_buff[0] == L'0')
 		return false;
 
 	while (i < len)
 	{
-		if (_buff[i] >= '0' && _buff[i] <= '9')
+		if (_buff[i] >= L'0' && _buff[i] <= L'9')
 		{
 			i++;
 			continue;
@@ -158,12 +160,23 @@ bool CParser::isInt(char *_buff, int len)
 	return true;
 }
 
-bool CParser::GetValue(char *szName, int *ipValue, char *partName)
+bool CParser::GetValue(WCHAR *szName, int *ipValue, WCHAR *partName)
 {
-	char *buff, chWord[256];
+	WCHAR *buff, chWord[256];
 	int iLength;
 
 	buff = buffer;
+
+	while (GetNextWord(&buff, &iLength))
+	{
+		// WORD버퍼에 찾은 단어를 저장한다.
+		memset(chWord, 0, 256);
+		memcpy(chWord, buff, iLength);
+
+		if (*(buff - 1) == L':')
+			if (lstrcmpW(partName, chWord) == 0)
+				break;
+	}
 
 	// 찾고자 하는단어가 나올때까지 계속찾을것이므로, while문으로 검사
 	while (GetNextWord(&buff, &iLength))
@@ -172,11 +185,13 @@ bool CParser::GetValue(char *szName, int *ipValue, char *partName)
 		memset(chWord, 0, 256);
 		memcpy(chWord, buff, iLength);
 
-		if (*(buff - 1) == ':')
-			strcpy_s(partName, iLength + 1, chWord);
-		
+		if (*(buff - 1) == L':')
+		{
+			if (lstrcmpW(partName, chWord) != 0)
+				return false;
+		}
 		// 인자로 입력 받은 단어와 같은지 검사한다.
- 		 else if (0 == strcmp(szName, chWord))
+ 		 else if (0 == lstrcmpW(szName, chWord))
 		{
 			// 맞다면 바로 뒤에 =를 찾자.
 			if (GetNextWord(&buff, &iLength))
@@ -184,18 +199,18 @@ bool CParser::GetValue(char *szName, int *ipValue, char *partName)
 				memset(chWord, 0, 256);
 				memcpy(chWord, buff, iLength);
 
-				if (0 == strcmp(chWord, "="))
+				if (0 == lstrcmpW(chWord, L"="))
 				{
 					// 다음 부분의 데이터 부분을 얻음.
 					if (GetNextWord(&buff, &iLength))
 					{
-						if (buff[0] != '\"')
+						if (buff[0] != L'\"')
 						{
 							memset(chWord, 0, 256);
 							memcpy(chWord, buff, iLength);
-							if (isInt(chWord, iLength))
+							if (isInt(chWord, iLength / 2))
 							{
-								*ipValue = atoi(chWord);
+								*ipValue = _wtoi(chWord);
 								return true;
 							}
 							return false;
@@ -211,12 +226,23 @@ bool CParser::GetValue(char *szName, int *ipValue, char *partName)
 	}
 	return false;
 }
-bool CParser::GetValue(char *szName, char *ipValue, char *partName)
+bool CParser::GetValue(WCHAR *szName, WCHAR *ipValue, WCHAR *partName)
 {
-	char *buff, chWord[256];
+	WCHAR *buff, chWord[256];
 	int iLength;
 
 	buff = buffer;
+
+	while (GetNextWord(&buff, &iLength))
+	{
+		// WORD버퍼에 찾은 단어를 저장한다.
+		memset(chWord, 0, 256);
+		memcpy(chWord, buff, iLength);
+
+		if (*(buff - 1) == L':')
+			if (lstrcmpW(partName, chWord) == 0)
+				break;
+	}
 
 	// 찾고자 하는단어가 나올때까지 계속찾을것이므로, while문으로 검사
 	while (GetNextWord(&buff, &iLength))
@@ -224,11 +250,14 @@ bool CParser::GetValue(char *szName, char *ipValue, char *partName)
 		// WORD버퍼에 찾은 단어를 저장한다.
 		memset(chWord, 0, 256);
 		memcpy(chWord, buff, iLength);
-		if (*(buff - 1) == ':')
-			strcpy_s(partName, iLength + 1, chWord);
 		
+		if (*(buff - 1) == L':')
+		{
+			if (lstrcmpW(partName, chWord) != 0)
+				return false;
+		}
 		// 인자로 입력 받은 단어와 같은지 검사한다.
-		else if (0 == strcmp(szName, chWord))
+		else if (0 == lstrcmpW(szName, chWord))
 		{
 			// 맞다면 바로 뒤에 =를 찾자.
 			if (GetNextWord(&buff, &iLength))
@@ -236,21 +265,21 @@ bool CParser::GetValue(char *szName, char *ipValue, char *partName)
 				memset(chWord, 0, 256);
 				memcpy(chWord, buff, iLength);
 
-				if (0 == strcmp(chWord, "="))
+				if (0 == lstrcmpW(chWord, L"="))
 				{
 					// 다음 부분의 데이터 부분을 얻음.
 					if (GetNextWord(&buff, &iLength))
 					{
-						if (buff[0] != '\"')
+						if (buff[0] == L'\"')
 						{
 							memset(chWord, 0, 256);
-							memcpy(chWord, buff, iLength);
-							if (!isInt(chWord, iLength))
+							memcpy(chWord, buff + 1, iLength);
+							if (!isInt(chWord, iLength / 2))
 							{
-								if (!isFloat(chWord, iLength))
+								if (!isFloat(chWord, iLength / 2))
 								{
-									chWord[iLength] = '\0';
-									strcpy_s(ipValue, iLength + 1, chWord);
+									chWord[iLength / 2 - 2] = L'\0';
+									lstrcpynW(ipValue, chWord, iLength / 2);
 									return true;
 								}
 							}
@@ -267,12 +296,24 @@ bool CParser::GetValue(char *szName, char *ipValue, char *partName)
 	}
 	return false;
 }
-bool CParser::GetValue(char *szName, float *ipValue, char *partName)
+bool CParser::GetValue(WCHAR *szName, float *ipValue, WCHAR *partName)
 {
-	char *buff, chWord[256];
+	WCHAR *buff, chWord[256];
 	int iLength;
 
 	buff = buffer;
+
+	while (GetNextWord(&buff, &iLength))
+	{
+		// WORD버퍼에 찾은 단어를 저장한다.
+		memset(chWord, 0, 256);
+		memcpy(chWord, buff, iLength);
+
+		if (*(buff - 1) == L':')
+			if (lstrcmpW(partName, chWord) == 0)
+				break;
+	}
+
 	// 찾고자 하는단어가 나올때까지 계속찾을것이므로, while문으로 검사
 	while (GetNextWord(&buff, &iLength))
 	{
@@ -280,11 +321,13 @@ bool CParser::GetValue(char *szName, float *ipValue, char *partName)
 		memset(chWord, 0, 256);
 		memcpy(chWord, buff, iLength);
 
-		if (*(buff - 1) == ':')
-			strcpy_s(partName, iLength + 1, chWord);
-		
+		if (*(buff - 1) == L':')
+		{
+			if (lstrcmpW(partName, chWord) != 0)
+				return false;
+		}
 		// 인자로 입력 받은 단어와 같은지 검사한다.
-		else if (0 == strcmp(szName, chWord))
+		 else if (0 == lstrcpyW(szName, chWord))
 		{
 			// 맞다면 바로 뒤에 =를 찾자.
 			if (GetNextWord(&buff, &iLength))
@@ -292,19 +335,19 @@ bool CParser::GetValue(char *szName, float *ipValue, char *partName)
 				memset(chWord, 0, 256);
 				memcpy(chWord, buff, iLength);
 
-				if (0 == strcmp(chWord, "="))
+				if (0 == lstrcpyW(chWord, L"="))
 				{
 					// 다음 부분의 데이터 부분을 얻음.
 					if (GetNextWord(&buff, &iLength))
 					{
-						if (buff[0] != '\"')
+						if (buff[0] != L'\"')
 						{
 
 							memset(chWord, 0, 256);
 							memcpy(chWord, buff, iLength);
-							if (isFloat(chWord, iLength))
+							if (isFloat(chWord, iLength / 2))
 							{
-								*ipValue = atof(chWord);
+								*ipValue = _wtof(chWord);
 								return true;
 							}
 							return false;
